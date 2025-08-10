@@ -1,0 +1,8 @@
+Distributed Email Scraping Statistics
+========================================
+Website URL: https://www.dlsu.edu.ph
+Number of pages scraped: 590
+Number of email addresses found: 21
+Number of worker nodes used: 2
+Start time: 2025-08-11T06:04:46.009017
+End time: 2025-08-11T06:14:55.835359
