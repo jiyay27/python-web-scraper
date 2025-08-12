@@ -18,8 +18,8 @@ import argparse
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class DistributedScrapingCoordinator:
-    def __init__(self, base_url, scraping_time_minutes, num_nodes, port=8888):
+class MasterNode:
+    def __init__(self, base_url, scraping_time_minutes, num_nodes, port=8000):
         self.base_url = base_url
         self.scraping_time_seconds = scraping_time_minutes * 60
         self.num_nodes = num_nodes
@@ -57,7 +57,7 @@ class DistributedScrapingCoordinator:
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server_socket.bind(('localhost', self.port))
+            self.server_socket.bind(('0.0.0.0', self.port))
             self.server_socket.listen(self.num_nodes)
 
             logger.info(f"Coordination server started on port {self.port}")
@@ -231,8 +231,8 @@ class DistributedScrapingCoordinator:
             # Log progress
             with self.data_lock:
                 logger.info(f"Progress - Pages: {self.statistics['pages_scraped']}, "
-                           f"Emails: {self.statistics['emails_found']}, "
-                           f"Time remaining: {self.get_time_remaining():.0f}s")
+                            f"Emails: {self.statistics['emails_found']}, "
+                            f"Time remaining: {self.get_time_remaining():.0f}s")
 
         # Time's up - signal workers to stop
         logger.info("Scraping time completed. Signaling workers to stop...")
@@ -310,7 +310,7 @@ def main():
     parser.add_argument('url', help='URL of the website to be scraped')
     parser.add_argument('time', type=int, help='Scraping time in minutes')
     parser.add_argument('nodes', type=int, help='Number of worker nodes to use')
-    parser.add_argument('--port', type=int, default=8888, help='Coordination server port')
+    parser.add_argument('--port', type=int, default=8000, help='Coordination server port')
 
     args = parser.parse_args()
 
@@ -329,7 +329,7 @@ def main():
 
     try:
         # Create and start coordinator
-        coordinator = DistributedScrapingCoordinator(
+        coordinator = MasterNode(
             base_url=args.url,
             scraping_time_minutes=args.time,
             num_nodes=args.nodes,

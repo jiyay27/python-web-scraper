@@ -13,40 +13,43 @@ import argparse
 from datetime import datetime
 import urllib3
 
-# Disable SSL warnings for web scraping
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-class DistributedScrapingWorker:
-    def __init__(self, master_host='localhost', master_port=8888, worker_id=None):
+class WorkerNode:
+    def __init__(self, master_host='localhost', master_port=8000, worker_id=None):
         self.master_host = master_host
         self.master_port = master_port
         self.worker_id = worker_id or f"worker_{int(time.time())}"
 
-        # Connection to master
         self.master_socket = None
         self.is_running = False
         self.scraping_active = False
 
-        # Scraping configuration
         self.base_url = None
         self.scraping_time = None
         self.start_time = None
 
-        # Local data collection
         self.local_emails = []
         self.local_pages_processed = 0
         self.local_urls_found = []
 
-        # Email and content extraction patterns
-        self.email_pattern = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
-        self.name_patterns = [
-            re.compile(r'(?:Dr\.|Prof\.|Mr\.|Ms\.|Mrs\.)\s+([A-Za-z\s]+)', re.IGNORECASE),
-            re.compile(r'<h[1-6][^>]*>([^<]*(?:Dr\.|Prof\.|Mr\.|Ms\.|Mrs\.)[^<]*)</h[1-6]>', re.IGNORECASE),
+        self.email_patterns = [
+            re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'),  # normal email
+            re.compile(r'([A-Za-z0-9._%+-]+)\s*\[?\(?at\)?\]?\s*([A-Za-z0-9.-]+)\s*\[?\(?dot\)?\]?\s*([A-Za-z]{2,})', re.IGNORECASE)  # obfuscated
         ]
+
+        self.name_patterns = [
+            re.compile(r'(?:Dr\.|Prof\.|Mr\.|Ms\.|Mrs\.)\s*([A-Za-z\s]+)', re.IGNORECASE),  # title + name
+            re.compile(r'<h[1-6][^>]*>([^<]*(?:Dr\.|Prof\.|Mr\.|Ms\.|Mrs\.)[^<]*)</h[1-6]>', re.IGNORECASE),  # name in header tags
+            re.compile(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b')  # basic full name
+        ]
+
+        self.dept_keywords = ['department', 'faculty', 'college', 'school', 'division', 'institute', 'center']
+        self.office_keywords = ['office', 'room', 'building', 'hall']
 
         # Request session with proper headers and SSL handling
         self.session = requests.Session()
@@ -58,21 +61,17 @@ class DistributedScrapingWorker:
             'Connection': 'keep-alive',
         })
 
-        # Configure SSL handling
-        self.session.verify = True  # Enable SSL verification by default
 
-        # For problematic sites, we'll handle SSL issues gracefully
+        self.session.verify = True  # Enable SSL verification by default
         self.ssl_fallback = False
 
     def connect_to_master(self):
-        """Connect to the master coordination node"""
         try:
             self.master_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.master_socket.connect((self.master_host, self.master_port))
 
             logger.info(f"Worker {self.worker_id} connected to master at {self.master_host}:{self.master_port}")
 
-            # Start message handling thread
             self.is_running = True
             threading.Thread(target=self.handle_master_messages, daemon=True).start()
 
@@ -83,7 +82,6 @@ class DistributedScrapingWorker:
             return False
 
     def handle_master_messages(self):
-        """Handle messages from the master node"""
         try:
             while self.is_running:
                 data = self.master_socket.recv(4096)
@@ -99,7 +97,6 @@ class DistributedScrapingWorker:
             self.cleanup_connection()
 
     def process_master_message(self, message):
-        """Process messages received from master node"""
         msg_type = message.get('type')
 
         if msg_type == 'start_scraping':
@@ -113,7 +110,6 @@ class DistributedScrapingWorker:
             threading.Thread(target=self.start_scraping_process, daemon=True).start()
 
         elif msg_type == 'url_assignment':
-            # Master assigned URLs to process
             urls = message.get('urls', [])
             time_remaining = message.get('time_remaining', 0)
 
@@ -127,20 +123,16 @@ class DistributedScrapingWorker:
             self.send_final_results()
 
     def start_scraping_process(self):
-        """Start the scraping process"""
         logger.info("Starting scraping process...")
 
         while self.scraping_active and self.get_time_remaining() > 0:
-            # Request URLs from master
             self.request_urls_from_master()
 
-            # Wait a bit before requesting more URLs
             time.sleep(2)
 
         logger.info("Scraping process completed")
 
     def request_urls_from_master(self):
-        """Request URLs to process from master"""
         request_message = {
             'type': 'url_request',
             'batch_size': 5,
@@ -149,7 +141,6 @@ class DistributedScrapingWorker:
         self.send_message_to_master(request_message)
 
     def process_url_batch(self, urls):
-        """Process a batch of URLs assigned by master"""
         with ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
 
@@ -158,7 +149,6 @@ class DistributedScrapingWorker:
                     future = executor.submit(self.scrape_single_url, url)
                     futures.append(future)
 
-            # Wait for all scraping tasks to complete
             for future in futures:
                 try:
                     future.result(timeout=30)  # 30 second timeout per URL
@@ -166,7 +156,6 @@ class DistributedScrapingWorker:
                     logger.error(f"Error in scraping task: {e}")
 
     def scrape_single_url(self, url):
-        """Scrape a single URL for emails and content"""
         try:
             logger.info(f"Scraping URL: {url}")
 
@@ -221,7 +210,6 @@ class DistributedScrapingWorker:
             logger.error(f"Unexpected error scraping {url}: {e}")
 
     def extract_emails_from_content(self, soup, source_url):
-        """Extract email addresses and associated information from page content"""
         emails_found = []
 
         # Get all text content
@@ -238,7 +226,6 @@ class DistributedScrapingWorker:
         return emails_found
 
     def extract_email_context(self, soup, email, source_url):
-        """Extract context information around an email address"""
         email_info = {
             'email': email,
             'name': '',
@@ -271,8 +258,8 @@ class DistributedScrapingWorker:
                         text_lower = parent_text.lower()
 
                         # Department keywords
-                        dept_keywords = ['department', 'college', 'school', 'faculty']
-                        for keyword in dept_keywords:
+                        # dept_keywords = ['department', 'college', 'school', 'faculty']
+                        for keyword in self.dept_keywords:
                             if keyword in text_lower:
                                 lines = parent_text.split('\n')
                                 for line in lines:
@@ -281,8 +268,8 @@ class DistributedScrapingWorker:
                                         break
 
                         # Office keywords
-                        office_keywords = ['office', 'room', 'building']
-                        for keyword in office_keywords:
+                        # office_keywords = ['office', 'room', 'building']
+                        for keyword in self.office_keywords:
                             if keyword in text_lower:
                                 lines = parent_text.split('\n')
                                 for line in lines:
@@ -300,7 +287,6 @@ class DistributedScrapingWorker:
         return email_info
 
     def extract_links_from_page(self, soup, current_url):
-        """Extract valid links from the current page"""
         new_urls = []
 
         try:
@@ -322,7 +308,7 @@ class DistributedScrapingWorker:
                         new_urls.append(full_url)
 
             # Remove duplicates and limit quantity
-            new_urls = list(set(new_urls))[:20]  # Limit to 20 URLs per page
+            new_urls = list(set(new_urls))[:30]  # Limit to 20 URLs per page
 
         except Exception as e:
             logger.error(f"Error extracting links from {current_url}: {e}")
@@ -330,7 +316,6 @@ class DistributedScrapingWorker:
         return new_urls
 
     def is_valid_url(self, url):
-        """Check if URL is valid for scraping"""
         # Skip common non-content URLs
         skip_extensions = ['.pdf', '.jpg', '.jpeg', '.png', '.gif', '.css', '.js', '.zip', '.doc', '.docx']
         skip_keywords = ['javascript:', 'mailto:', '#', 'tel:']
@@ -348,7 +333,6 @@ class DistributedScrapingWorker:
         return True
 
     def send_new_urls_to_master(self, urls):
-        """Send newly found URLs to master"""
         if urls:
             message = {
                 'type': 'new_urls',
@@ -358,7 +342,6 @@ class DistributedScrapingWorker:
             self.send_message_to_master(message)
 
     def send_intermediate_results(self):
-        """Send intermediate results to master"""
         if self.local_emails or self.local_pages_processed > 0:
             results = {
                 'emails': self.local_emails.copy(),
@@ -378,7 +361,6 @@ class DistributedScrapingWorker:
             self.local_pages_processed = 0
 
     def send_final_results(self):
-        """Send final results to master before stopping"""
         results = {
             'emails': self.local_emails.copy(),
             'pages_processed': self.local_pages_processed
@@ -395,16 +377,17 @@ class DistributedScrapingWorker:
         logger.info(f"Sent final results: {len(self.local_emails)} emails, {self.local_pages_processed} pages")
 
     def send_message_to_master(self, message):
-        """Send message to master node"""
         try:
             if self.master_socket:
                 message_str = json.dumps(message)
                 self.master_socket.send(message_str.encode())
+            else:
+                logger.warning("Master socket not connected, skipping send")
         except Exception as e:
             logger.error(f"Error sending message to master: {e}")
+            self.master_socket = None
 
     def get_time_remaining(self):
-        """Get remaining scraping time"""
         if self.start_time is None or self.scraping_time is None:
             return float('inf')
 
@@ -412,7 +395,6 @@ class DistributedScrapingWorker:
         return max(0, self.scraping_time - elapsed)
 
     def cleanup_connection(self):
-        """Clean up connection to master"""
         try:
             if self.master_socket:
                 self.master_socket.close()
@@ -420,7 +402,6 @@ class DistributedScrapingWorker:
             logger.error(f"Error during cleanup: {e}")
 
     def run(self):
-        """Main worker execution loop"""
         logger.info(f"Starting worker {self.worker_id}")
 
         if not self.connect_to_master():
@@ -428,7 +409,6 @@ class DistributedScrapingWorker:
             return False
 
         try:
-            # Keep the worker running until told to stop
             while self.is_running:
                 time.sleep(1)
 
@@ -446,14 +426,13 @@ class DistributedScrapingWorker:
 def main():
     parser = argparse.ArgumentParser(description='Distributed Email Web Scraper - Worker Node')
     parser.add_argument('--master-host', default='localhost', help='Master node hostname/IP')
-    parser.add_argument('--master-port', type=int, default=8888, help='Master node port')
+    parser.add_argument('--master-port', type=int, default=8000, help='Master node port')
     parser.add_argument('--worker-id', help='Worker ID (auto-generated if not provided)')
 
     args = parser.parse_args()
 
     try:
-        # Create and run worker
-        worker = DistributedScrapingWorker(
+        worker = WorkerNode(
             master_host=args.master_host,
             master_port=args.master_port,
             worker_id=args.worker_id

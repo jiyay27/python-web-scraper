@@ -3,6 +3,7 @@ bs4==0.0.2
 certifi==2025.8.3
 charset-normalizer==3.4.3
 idna==3.10
+psutil==7.0.0
 requests==2.32.4
 soupsieve==2.7
 typing_extensions==4.14.1
