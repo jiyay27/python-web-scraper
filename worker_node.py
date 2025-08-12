@@ -162,12 +162,10 @@ class WorkerNode:
         def decode(text):
             return urllib.parse.unquote(html.unescape(str(text)))
 
-        # 1. Visible text
         page_text = decode(soup.get_text())
         for pattern in self.email_patterns:
             email_matches.extend(pattern.findall(page_text))
 
-        # 2. Tag attributes
         for tag in soup.find_all(True):
             for attr, value in tag.attrs.items():
                 if isinstance(value, list):
@@ -176,19 +174,16 @@ class WorkerNode:
                 for pattern in self.email_patterns:
                     email_matches.extend(pattern.findall(value_decoded))
 
-        # 3. HTML comments
         for comment in soup.find_all(string=lambda text: isinstance(text, Comment)):
             comment_decoded = decode(comment)
             for pattern in self.email_patterns:
                 email_matches.extend(pattern.findall(comment_decoded))
 
-        # 4. Mailto links
         for a in soup.find_all('a', href=True):
             if a['href'].lower().startswith('mailto:'):
                 email = decode(a['href'][7:].split('?')[0])
                 emails_found.add(email)
 
-        # 5. Normalize matches
         for match in email_matches:
             if isinstance(match, tuple):
                 emails_found.add(f"{match[0]}@{match[1]}.{match[2]}")
