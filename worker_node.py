@@ -21,7 +21,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class WorkerNode:
-    def __init__(self, master_host='localhost', master_port=8000, worker_id=None):
+    def __init__(self, master_host='ccscloud.dlsu.edu.ph', master_port=21525, worker_id=None):
         self.master_host = master_host
         self.master_port = master_port
         self.worker_id = worker_id or f"worker_{int(time.time())}"
